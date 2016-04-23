@@ -1,0 +1,52 @@
+N-Gram Text Prediction
+========================================================
+author: Victor Davis
+date: 2016-04-22
+
+(Please view the RPubs slidedeck [here](http://rpubs.com/VictorDavis/nlp-capstone))
+
+![Product Image](image2.jpg)
+
+Cleaning the Text
+========================================================
+
+My biggest leap in accuracy came from simplifying the training text into a stream of words, including "pseudo-words" like dates, money, etc. For example, "Mr. Xampler, worth over $2,000,000 today, was born on July 10th, 1954." would become "mr \<unk\> worth over \<money\> today was born on \<date\> \<stop\>".
+
+1. Identifying abbreviations like Mr./St./initials as words and using punctuation to break text into sentences separated by a \<stop\> token.
+
+2. Scrubbing text of non-unicode characters, punctuation, rendering all lowercase, and simplifying whitespace.
+
+3. Tagging pseudowords that can't be predicted: \<money\>, \<date\>, \<unk\>, \<percent\>, \<year\>, \<decimal\>, \<ordinal\>, \<fraction\>, \<number\>, and \<range\>.
+
+Counting N-Grams
+========================================================
+
+Lists of *repeated* n-grams are compiled from this stream of words.
+
+1. A "word" only goes in the dictionary if it appears more than once, else it is scrubbed out by the \<unk\> token.
+
+2. A "phrase" only goes into the n-gram list if it appears more than once, else it is ignored.
+
+3. The \<stop\> token can be the first or last word in a phrase, but none in the middle. That is, sentence breaks *always* break up phrases.
+
+4. All are stored in csv flat files along with their frequencies. So "the" appears in 1gram.csv with frequency 6%, and "one of the" appears in 3gram.csv with frequency 1%.
+
+Building the Model
+========================================================
+
+The "model" consists of the rules by which this data is queried to suggest a next word.
+
+1. The user's input is scrubbed *using the same scrubbing function as the training corpus*.
+
+2. First the user's last 7 words are looked up in the 8gram file for a match. If none is found, the user's last 6 words are looked up in the 7gram file for a match, and so on, until a match is found.
+
+3. The highest n-gram takes precedence, followed by frequency. I can dial my product in to return the best x guesses, so if x is 1 or 3, then the loop breaks when 1 or 3 matches are found.
+
+Benchmarking
+========================================================
+
+My model-builder can take an arbitrarily large random sample of training text. My final product samples 10% of the blogs corpus to train, yielding a model about 75MB in RAM with <1sec response times.
+
+When predicting the *whole* word, I get about 10% accuracy from my test text, p("take me to your") = "leader". When auto-completing a word, I get an accuracy around 40%, p("take me to your lea") = "leader".
+
+While I used some hashing, indexing, and lookup techniques to speed up performance, my greatest gains came from (a) nixing "orphans" since a vast majority of text consists of words & phrases only used once and thus not predictive, and (b) cleaning text, vigorously reducing the space of possibilities.

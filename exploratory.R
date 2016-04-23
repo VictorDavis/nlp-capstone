@@ -2,6 +2,7 @@
 # Dependencies
 library(R.utils)
 
+# download, unzip, & create train/test datasets
 download <- function(fname) {
 
   # Corpus we'll be using
@@ -24,15 +25,15 @@ download <- function(fname) {
     testing_pct = .0010
       
     # loop through file
-    conn <- file(fname, "r")
+    conn <- file(fname, "rt")
     training_conn <- file(training_file, "w")
     testing_conn <- file(testing_file, "w")
-    while (length(line <- readLines(conn, n = 1, warn = FALSE)) > 0) {
+    while (length(line <- readLines(conn, n = 1, encoding = "UTF-8")) > 0) {
       r <- runif(1, min = 0, max = 1)
       if (r < training_pct) { # accept
-        writeLines(line, training_conn)
+        writeLines(line, training_conn, useBytes = T)
       } else if (r < testing_pct + training_pct) {
-        writeLines(line, testing_conn)
+        writeLines(line, testing_conn, useBytes = T)
       }
     }
     close(conn)
@@ -49,29 +50,42 @@ strrev <- function(str) {
 # handles special characters (order matters!)
 # Note: this seems to cover everything "in limits" [A-Za-z0-9 éÍöşıñ[:punct:]]
 scrub <- function(text) {
-  text <- gsub("[‘’`]","'",text)
+  text <- gsub("[‘’\u2019`]","'",text)
   text <- gsub("'s","s",text)
   text <- gsub("&"," and ", text)
   text <- gsub("@"," and ", text)
   text <- gsub("#"," number ", text)
   text <- gsub("[0-9]+/[0-9]+/[0-9]+","<date>", text)
   text <- gsub("[0-9]*(\\.[0-9]+)?%","<percent>", text)
-  text <- gsub("\\$[0-9,]*([\\.][0-9]+)?(¢)?","<money>", text)
+  text <- gsub("[\\$£][0-9,]*([\\.][0-9]+)?(¢)?([Kk])?","<money>", text)
   text <- gsub("[1-9]([0-9]){3}((')?s)?","<year>", text)
   text <- gsub("[1-9]0(')?s","<year>", text)
   text <- gsub("[0-9]+(rd|st|nd|th)","<ordinal>", text)
   text <- gsub("[0-9,]*\\.[0-9]+","<decimal>", text)
   text <- gsub("[0-9]+/[0-9]+","<fraction>", text)
-  text <- gsub("^[0-9,]+","<number>", text)
-  text <- gsub("([^A-Za-z0-9]|x)[0-9,]+","\\1<number>", text)
+  text <- gsub("^[0-9,]+[Kk]?","<number>", text)
+  text <- gsub("([^A-Za-z0-9<>]|x)[0-9]+(,[0-9]+)*[Kk]?","\\1<number>", text)
   text <- gsub("[“”″]","\"",text)
-  text <- gsub("[–]","-",text)
+  text <- gsub("[––\u2013]","-",text)
+  text <- gsub("<number> ?- ?<number>","<range>", text)
+  text <- gsub("-"," ",text) # replace all hyphens with space "duck-like" 2 wds
+  text <- gsub("/"," ",text) # replace all slashes with space "and/or" 2 wds
   text <- gsub("[…]","\\.",text)
   text <- gsub("<([a-z]+)>","X\\1X",text)
   text <- gsub("[[:punct:]]", "", text) # remove all punctuation EXCEPT <>
   text <- gsub("X([a-z]+)X","<\\1>",text)
   text <- tolower(text)
   text
+}
+
+# run interactive to test scrub
+if (F) {
+  conn <- file(training_file, "rt")
+  training <- readLines(conn, encoding = "UTF-8")
+  close(conn)
+  names(training) <- training
+  suspects <- training[grep("[^[:print:]]", training, perl=T)]
+  scrub(sample(suspects,1))
 }
 
 # tokenizer function
@@ -107,17 +121,25 @@ getStream <- function() {
   word_file = "data/stream.dat"
   if (!file.exists(word_file)) {
     
-    training <- readLines(training_file)
-    training <- sentence(training) # transform from "lines" to "sentences"
-    training_tokens <- sapply(training, tokenize) # tokenize sentences into words
-    training_tokens <- training_tokens[sapply(training_tokens, length) > 0] # remove empties
-    tbl <- sapply(training_tokens, function(x) paste0(x, collapse=" "))
-    names(tbl) <- c()
-    
-    write.table(tbl, word_file, row.names = F, col.names = F, quote = F)
+    conn <- file(training_file, "rt")
+    stream_conn <- file(word_file, "w")
+    while (length(line <- readLines(conn, n = 1, encoding = "UTF-8")) > 0) {
+      # writeLines(line, stream_conn, useBytes = T)
+      lines <- sentence(line) # transform from "lines" to "sentences"
+      for (line in lines) {
+        words <- tokenize(line) # tokenize sentences into words
+        words <- words[nchar(trim(words)) > 0] # remove empties
+        line <- paste(words, collapse=" ")
+        if (nchar(trim(line)) > 0) {
+          writeLines(line, stream_conn, useBytes = T)
+        }
+      }
+    }
+    close(conn)
+    close(stream_conn)
   }
   
-  stream <- readLines(word_file)
+  stream <- readLines(word_file, encoding = "UTF-8")
   stream <- sapply(stream, function(x) strsplit(x, split = " ")[[1]])
   stream
 }
@@ -273,6 +295,7 @@ getWidRange <- function(pattern = "") {
     } else {
         wr <- c(0,0) # no match
     }
+    wr
 }
 
 # yes/no word is a special tag <date> <money> <year> etc
@@ -312,8 +335,8 @@ matchNGram <- function(wids, wr, k=3) {
   pred
 }
 
-# pre-digest phrase for prediction
-digest <- function(phrase) {
+# pre-digestR phrase for prediction
+digestR <- function(phrase) {
   
   # is last character space, punct, or char?
   last <- substr(strrev(phrase),1,1)
@@ -347,15 +370,15 @@ digest <- function(phrase) {
   wids <- widify(tokens)
   wr <- getWidRange(pattern)
   
-  # return "digested" phrase
+  # return "digestRed" phrase
   list(wids, wr)
 }
 
 # R&D on predictions
 tablePredictions <- function(phrase) {
   
-  # digest phrase
-  d <- digest(phrase)
+  # digestR phrase
+  d <- digestR(phrase)
   wids <- d[[1]]
   wr <- d[[2]]
   
@@ -376,8 +399,8 @@ tablePredictions <- function(phrase) {
 # predict/autocomplete next word
 predictNextWord <- function(phrase, k=3) {
   
-  # digest phrase
-  d <- digest(phrase)
+  # digestR phrase
+  d <- digestR(phrase)
   wids <- d[[1]]
   wr <- d[[2]]
   # match n-grams from highest to lowest until k predictions found
@@ -389,6 +412,7 @@ predictNextWord <- function(phrase, k=3) {
     
     pred <- unique(pred) # no duplicates
     pred <- pred[pred != getWID("<unk>")] # don't predict "unknown word"
+    pred <- pred[pred > getWidRange("<")[2]] # don't predict tags at all
     
     if (length(wids) > 0) {
       wids <- wids[-1]
@@ -445,7 +469,7 @@ quiz <- function(fname) {
 }
 
 # test algorithm on training or testing file
-benchmark <- function(fname) {
+benchmarkR <- function(fname) {
   set.seed(91286)
   file <- readLines(fname)
   file <- sample(file[grep(" ", file)], 100)
@@ -478,12 +502,12 @@ benchmark <- function(fname) {
   data$match <- match
   data$easy  <- easy
   data$time <- time
-  write.csv(data, "data/benchmark.csv", row.names = F, fileEncoding="utf-8")
+  write.csv(data, "data/benchmarkR.csv", row.names = F, fileEncoding="utf-8")
 }
 
-# analyze/visualize benchmark results
+# analyze/visualize benchmarkR results
 analyze <- function() {
-  results <- read.csv("data/benchmark.csv")
+  results <- read.csv("data/benchmarkR.csv")
   results$pattern_len <- sapply(results$phrase, function(x) nchar(rev(tokenize(paste0(x, "x")))[1])-1)
   results$phrase_len <- sapply(results$phrase, function(x) min(c(10,length(tokenize(x)))))
   plot(aggregate(match ~ pattern_len, results, mean), main = "Accuracy by # Letters", xlab = "# of Letters", ylab = "Accuracy %")
@@ -495,14 +519,15 @@ analyze <- function() {
 training_file <- "data/training.txt"
 testing_file <- "data/testing.txt"
 quiz2_file <- "quiz2.txt"
-blogs  <- "final/en_US/en_US.blogs.txt"
+blogsR  <- "final/en_US/en_US.blogs.txt"
 news   <- "final/en_US/en_US.news.txt"
 twitter<- "final/en_US/en_US.twitter.txt"
 
 # load ngram files into RAM
 interactive <- F # F for shiny app
+g_encoding <- "UTF-16LE" # "UTF-16LE" for windows, "native.enc" for linux
 if (interactive) {
-  download(blogs)
+  download(blogsR)
   g_stream <- getStream()
   g_dict <- getDict()
   g_words <- getWords()
